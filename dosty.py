@@ -399,12 +399,14 @@ async def resolve_with_nodriver(
 
     try:
         import platform
-        # GitHub Actions / Linux CI runs Chrome as root which requires --no-sandbox.
-        # Also --disable-dev-shm-usage prevents crashes in low-memory containers.
-        browser_args = []
-        if platform.system() == "Linux":
-            browser_args = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-        browser = await uc.start(headless=headless, browser_args=browser_args)
+        # GitHub Actions / Linux CI runs as root — nodriver requires no_sandbox=True.
+        # disable-dev-shm-usage and disable-gpu prevent crashes in low-memory containers.
+        _linux = platform.system() == "Linux"
+        browser = await uc.start(
+            headless=headless,
+            no_sandbox=_linux,
+            browser_args=["--disable-dev-shm-usage", "--disable-gpu"] if _linux else [],
+        )
         steps.append("nodriver: browser started")
 
         tab = await browser.get(input_url)
