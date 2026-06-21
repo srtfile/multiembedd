@@ -1,0 +1,75 @@
+name: Resolve Embed URL
+
+on:
+  # Manually trigger from the GitHub Actions UI with a URL input
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Embed URL to resolve"
+        required: true
+        default: "https://multiembed.mov/?video_id=45050&tmdb=1"
+      server_id:
+        description: "Preferred server ID (optional, e.g. 89)"
+        required: false
+        default: ""
+
+jobs:
+  resolve:
+    name: Resolve Stream URL
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run dosty.py
+        id: resolve
+        run: |
+          EXTRA_ARGS=""
+          if [ -n "${{ github.event.inputs.server_id }}" ]; then
+            EXTRA_ARGS="--server-id ${{ github.event.inputs.server_id }}"
+          fi
+
+          echo "::group::Resolving: ${{ github.event.inputs.url }}"
+          python dosty.py "${{ github.event.inputs.url }}" $EXTRA_ARGS | tee result.json
+          echo "::endgroup::"
+
+      - name: Show stream URLs (summary)
+        run: |
+          echo "## 🎬 Resolve Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Input URL:** \`${{ github.event.inputs.url }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          OK=$(python -c "import json,sys; d=json.load(open('result.json')); print(d.get('ok',''))")
+          STATUS=$(python -c "import json,sys; d=json.load(open('result.json')); print(d.get('status',''))")
+          STREAMS=$(python -c "import json; d=json.load(open('result.json')); urls=d.get('stream_urls',[]); print('\n'.join(urls) if urls else '(none found)')")
+          EMBEDS=$(python -c "import json; d=json.load(open('result.json')); urls=d.get('embed_urls',[]); print('\n'.join(urls) if urls else '(none found)')")
+
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | \`$STATUS\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| OK | \`$OK\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Stream URLs" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$STREAMS" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Embed URLs" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$EMBEDS" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload full JSON result
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolve-result
+          path: result.json
+          retention-days: 7
