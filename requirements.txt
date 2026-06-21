@@ -1,0 +1,3 @@
+# Optional: nodriver enables Cloudflare-aware browser resolution
+# Uncomment the line below to include it in the Docker image
+# nodriver
