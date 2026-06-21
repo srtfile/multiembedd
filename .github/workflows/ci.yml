@@ -43,7 +43,7 @@ jobs:
 
       # ── Install nodriver (zero-WebDriver CDP browser automation) ─────────
       - name: Install nodriver
-        run: pip install nodriver
+        run: pip install nodriver opencv-python-headless
 
       # ── Run dosty.py in --browser --headless mode ─────────────────────────
       - name: Resolve embed URL
