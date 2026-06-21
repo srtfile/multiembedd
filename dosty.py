@@ -398,14 +398,38 @@ async def resolve_with_nodriver(
     started = time.time()
 
     try:
+        import os
         import platform
-        # GitHub Actions / Linux CI runs as root — nodriver requires no_sandbox=True.
-        # disable-dev-shm-usage and disable-gpu prevent crashes in low-memory containers.
+
         _linux = platform.system() == "Linux"
+
+        # On Linux CI (GitHub Actions), find the system Chrome/Chromium binary
+        # explicitly — nodriver's own binary finder fails inside containers.
+        chrome_exe = None
+        if _linux:
+            _candidates = [
+                "/usr/bin/google-chrome-stable",
+                "/usr/bin/google-chrome",
+                "/usr/bin/chromium-browser",
+                "/usr/bin/chromium",
+                "/snap/bin/chromium",
+            ]
+            for _p in _candidates:
+                if os.path.exists(_p):
+                    chrome_exe = _p
+                    break
+            steps.append(f"nodriver: chrome binary = {chrome_exe or '(auto)'}")
+
         browser = await uc.start(
             headless=headless,
             no_sandbox=_linux,
-            browser_args=["--disable-dev-shm-usage", "--disable-gpu"] if _linux else [],
+            browser_executable_path=chrome_exe,
+            browser_args=(
+                ["--disable-dev-shm-usage", "--disable-gpu",
+                 "--disable-software-rasterizer", "--no-first-run",
+                 "--no-default-browser-check", "--single-process"]
+                if _linux else []
+            ),
         )
         steps.append("nodriver: browser started")
 
