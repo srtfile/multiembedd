@@ -1,7 +1,6 @@
 name: Resolve Embed URL
 
 on:
-  # Manually trigger from the GitHub Actions UI with a URL input
   workflow_dispatch:
     inputs:
       url:
@@ -15,9 +14,9 @@ on:
 
 jobs:
   resolve:
-    name: Resolve Stream URL
+    name: Resolve Stream URL (nodriver / Cloudflare-aware)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -28,7 +27,20 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run dosty.py
+      # ── Install Google Chrome (required by nodriver) ──────────────────────
+      - name: Install Google Chrome
+        run: |
+          wget -q -O /tmp/chrome.deb \
+            https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y /tmp/chrome.deb
+          google-chrome --version
+
+      # ── Install nodriver (zero-WebDriver CDP browser automation) ─────────
+      - name: Install nodriver
+        run: pip install nodriver
+
+      # ── Run dosty.py in --browser --headless mode ─────────────────────────
+      - name: Resolve embed URL
         id: resolve
         run: |
           EXTRA_ARGS=""
@@ -36,38 +48,60 @@ jobs:
             EXTRA_ARGS="--server-id ${{ github.event.inputs.server_id }}"
           fi
 
-          echo "::group::Resolving: ${{ github.event.inputs.url }}"
-          python dosty.py "${{ github.event.inputs.url }}" $EXTRA_ARGS | tee result.json
+          echo "::group::Resolving (nodriver + headless Chrome): ${{ github.event.inputs.url }}"
+          python dosty.py \
+            "${{ github.event.inputs.url }}" \
+            --browser \
+            --headless \
+            $EXTRA_ARGS | tee result.json
           echo "::endgroup::"
+        env:
+          # Suppress Chrome sandbox warnings in GitHub Actions
+          DISPLAY: ""
 
+      # ── Pretty-print results in the workflow summary ───────────────────────
       - name: Show stream URLs (summary)
+        if: always()
         run: |
           echo "## 🎬 Resolve Result" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Input URL:** \`${{ github.event.inputs.url }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          OK=$(python -c "import json,sys; d=json.load(open('result.json')); print(d.get('ok',''))")
-          STATUS=$(python -c "import json,sys; d=json.load(open('result.json')); print(d.get('status',''))")
+          OK=$(python -c "import json; d=json.load(open('result.json')); print(d.get('ok',''))")
           STREAMS=$(python -c "import json; d=json.load(open('result.json')); urls=d.get('stream_urls',[]); print('\n'.join(urls) if urls else '(none found)')")
           EMBEDS=$(python -c "import json; d=json.load(open('result.json')); urls=d.get('embed_urls',[]); print('\n'.join(urls) if urls else '(none found)')")
+          STEPS=$(python -c "import json; d=json.load(open('result.json')); print('\n'.join(d.get('steps',[])))")
+          ERRORS=$(python -c "import json; d=json.load(open('result.json')); errs=d.get('errors',[]); print('\n'.join(errs) if errs else '(none)')")
 
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Status | \`$STATUS\` |" >> $GITHUB_STEP_SUMMARY
           echo "| OK | \`$OK\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Stream URLs" >> $GITHUB_STEP_SUMMARY
+
+          echo "### 🎯 Stream URLs" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "$STREAMS" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Embed URLs" >> $GITHUB_STEP_SUMMARY
+
+          echo "### 🔗 Embed URLs" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "$EMBEDS" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
+          echo "### 🪜 Steps" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$STEPS" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+          echo "### ⚠️ Errors" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$ERRORS" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      # ── Upload full JSON result as downloadable artifact ──────────────────
       - name: Upload full JSON result
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: resolve-result
