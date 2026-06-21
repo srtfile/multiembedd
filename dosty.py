@@ -460,15 +460,27 @@ async def resolve_with_nodriver(
             cf_markers = ("challenge-platform", "turnstile", "cf-browser-verification", "cf_clearance")
             if any(m in content.lower() for m in cf_markers):
                 if not cf_detected:
-                    steps.append("nodriver: Cloudflare challenge detected — calling tab.verify_cf()")
+                    steps.append("nodriver: Cloudflare challenge detected — waiting for auto-solve")
                     cf_detected = True
                 try:
-                    await tab.verify_cf()
-                    steps.append("nodriver: tab.verify_cf() completed")
+                    # verify_cf can return None; guard the await
+                    result = tab.verify_cf()
+                    if result is not None:
+                        await result
+                    steps.append("nodriver: verify_cf() completed")
                 except Exception as cf_exc:
                     errors.append(f"nodriver: verify_cf raised {cf_exc} (may be fine if already passed)")
+                # Don't break — wait for CF to clear and page to reload
+                await tab.sleep(2)
+            else:
+                if cf_detected:
+                    steps.append("nodriver: Cloudflare challenge cleared")
                 break
             await tab.sleep(1)
+
+        # After CF, wait a moment for the real page to load
+        if cf_detected:
+            await tab.sleep(3)
 
         # Wait for stream URLs to appear
         deadline = time.time() + stream_timeout
@@ -478,10 +490,17 @@ async def resolve_with_nodriver(
                 content = await tab.get_content()
                 found = extract_stream_urls(content)
                 stream_urls.extend(f for f in found if f not in stream_urls)
+                # Also look for embed/iframe URLs that might contain streams
+                page_url = tab.url if hasattr(tab, "url") else input_url
+                found_embeds = extract_iframe_urls(content, str(page_url))
+                found_embeds.extend(extract_embed_urls(content))
+                for eu in found_embeds:
+                    if eu not in embed_urls:
+                        embed_urls.append(eu)
             except Exception:
                 pass
             if not stream_urls:
-                await tab.sleep(1)
+                await tab.sleep(2)
 
         steps.append(f"nodriver: collected {len(stream_urls)} stream URL(s) after {round(time.time() - started, 1)}s")
 
@@ -489,11 +508,15 @@ async def resolve_with_nodriver(
         try:
             final_content = await tab.get_content()
             final_url = tab.url if hasattr(tab, "url") else input_url
-            embed_urls = extract_iframe_urls(final_content, str(final_url))
+            embed_urls.extend(eu for eu in extract_iframe_urls(final_content, str(final_url)) if eu not in embed_urls)
+            embed_urls.extend(eu for eu in extract_embed_urls(final_content) if eu not in embed_urls)
         except Exception:
             pass
 
-        await browser.stop()
+        # browser.stop() can return None; guard the await
+        _stop = browser.stop()
+        if _stop is not None:
+            await _stop
         steps.append("nodriver: browser stopped")
         # Allow subprocess transport cleanup on Windows before event loop closes
         await asyncio.sleep(0.3)
